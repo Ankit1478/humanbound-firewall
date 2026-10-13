@@ -1,0 +1,13 @@
+# Full stack with an OpenAI judge. Costs tokens; replies are cached under evals/cache/.
+name: full-openai
+tiers:
+  tier1:
+    consensus: 1
+    detectors:
+      - model: protectai/deberta-v3-base-prompt-injection-v2
+  tier2: null
+  tier3:
+    provider: openai
+    model: gpt-4o-mini
+fail: open
+repeats: 3

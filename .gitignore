@@ -47,3 +47,7 @@ Thumbs.db
 
 # Model files
 *.hbfw
+
+# Eval run output
+evals/results/
+evals/cache/

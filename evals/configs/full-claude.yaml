@@ -1,0 +1,13 @@
+# Full stack with a Claude judge. Costs tokens; replies are cached under evals/cache/.
+name: full-claude
+tiers:
+  tier1:
+    consensus: 1
+    detectors:
+      - model: protectai/deberta-v3-base-prompt-injection-v2
+  tier2: null
+  tier3:
+    provider: claude
+    model: claude-sonnet-4-6
+fail: open
+repeats: 3

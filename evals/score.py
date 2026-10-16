@@ -1,3 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Humanbound
+"""Score the results of a run: metrics, breakdowns, and the release gates.
+
+    python -m evals.score --results evals/results/<run-id>.jsonl
+    python -m evals.score --results <file> --baseline evals/baselines/tier0.json
+    python -m evals.score --results <file> --write-baseline evals/baselines/tier0.json
+
+A case counts as blocked when the firewall's action stopped it (withhold or reject): what the run's
+fail mode actually enforced. A review verdict is unsure, so both readings are reported too:
+fail-open (review passes) and fail-closed (review blocks).
+
+Metrics, overall and per class, suite, attack type, language, difficulty and split: detection rate
+(attacks blocked), false positive rate (benign content blocked), precision, F1, review rate and,
+for blocked attacks with an expected category, how often the category matched. Rates carry a 95%
+Wilson interval: on a small set a few points of difference is noise. Also: which tier decided,
+latency p50/p95, verdict flips across repeats, and every miss and false block.
+
+Gates (exit code 1 when any fails): no harness errors, nothing in must_pass blocked, everything in
+must_block blocked, and, with a baseline, detection may not drop and the false positive rate may
+not rise by more than the allowed margins.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -276,7 +299,7 @@ def summary(metrics: dict[str, Any], failures: list[str]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m evals.score", description=__doc__.split("\n")[0]
+        prog="python -m evals.score", description=(__doc__ or "").split("\n")[0]
     )
     parser.add_argument("--results", required=True, help="evals/results/<run-id>.jsonl")
     parser.add_argument(

@@ -8,16 +8,21 @@ Optional: window, boundary, expected_category, attack_type, language, source, di
 A case is validated when it is loaded, so a broken case fails loudly with its file and line instead
 of quietly skewing a score. Each case also records its suite, the name of the file it came from
 (e.g. "must_pass"), which the scorer uses for the hard gates.
+
+A tool case must carry the class its policy gives that tool, the way the adapters screen it: every
+tool is ingest unless the policy lists it under tools.recall.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from humanbound_firewall.models import CLASSES
+from humanbound_firewall.config import load_config
+from humanbound_firewall.models import CLASSES, AgentConfig
 
 EXPECTED = ("block", "pass")
 SPLITS = ("dev", "test")
@@ -114,6 +119,20 @@ class Case:
                 raise CaseError("boundary needs a non-empty name")
             if "args" in self.boundary and not isinstance(self.boundary["args"], dict):
                 raise CaseError("boundary.args must be an object")
+            if self.boundary.get("kind", "tools") == "tools":
+                self._check_tool_class(name, policies_dir)
+
+    def _check_tool_class(self, tool: str, policies_dir: Path) -> None:
+        """A tool's output has the class its policy gives it, as the adapters screen it: every
+        tool is ingest unless the policy's tools: block says recall. A case that disagrees tests
+        something that cannot happen in a real deployment."""
+        if self.cls == "request":
+            raise CaseError(f"a tool's output ({tool!r}) is never a request; use ingest or recall")
+        declared = _policy(policies_dir / self.policy).class_of(tool)
+        if declared != self.cls:
+            raise CaseError(
+                f"tool {tool!r} is {declared} in {self.policy}, but the case says cls={self.cls!r}"
+            )
 
 
 def load_cases(
@@ -154,6 +173,12 @@ def load_cases(
                 case.suite = file.stem
                 cases.append(case)
     return cases
+
+
+@functools.cache
+def _policy(path: Path) -> AgentConfig:
+    """A policy file, parsed once per path for the whole load."""
+    return load_config(path)
 
 
 def _one_of(name: str, value: Any, allowed: tuple[str, ...]) -> None:

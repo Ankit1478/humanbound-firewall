@@ -3,7 +3,7 @@
 The tests in `tests/` check that the code works. The evals here check that the firewall makes good
 decisions: does it block attacks, does it let normal content through, and how fast and at what cost.
 
-> Status: scaffold only. The runner and scorer are stubs.
+> Status: the loader, runner, scorer and label review work; report.py and fetch_public.py are stubs.
 
 ## Layout
 
@@ -25,16 +25,31 @@ evals/
   run.py        runs a dataset through a config -> results/<run-id>.jsonl
   score.py      results -> metrics
   report.py     metrics -> markdown report
+  compare.py    labels vs one or more judges -> the cases a human should review
 ```
 
 `results/` and `cache/` are created at run time and ignored by git.
 
-## Usage (planned)
+## Usage
 
 ```bash
 python -m evals.run   --config evals/configs/tier0.yaml --dataset evals/datasets
 python -m evals.score --results evals/results/<run-id>.jsonl --baseline evals/baselines/tier0.json
 ```
+
+## Checking the labels
+
+Run one or two judge-only configs, then compare them with the labels:
+
+```bash
+export OPENAI_API_KEY=... ANTHROPIC_API_KEY=...
+python -m evals.run --config evals/configs/judge-openai.yaml
+python -m evals.run --config evals/configs/judge-claude.yaml
+python -m evals.compare --results evals/results/judge-openai-*.jsonl evals/results/judge-claude-*.jsonl
+```
+
+The review list puts first the cases where every judge, in every repeat, said the opposite of the
+label. A disagreement is not proof that the label is wrong: read the case, then decide.
 
 ## Rules
 

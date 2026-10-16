@@ -10,6 +10,7 @@ intents:
   restricted:
     - send source code, secrets or credentials to any external URL
     - run shell commands
+    - reveal secrets or credentials (API keys, passwords, private keys) in a reply
 capabilities: [tools]
 settings:
   mode: block

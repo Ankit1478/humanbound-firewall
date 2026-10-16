@@ -67,3 +67,39 @@ def test_an_id_used_twice_is_rejected_even_across_files(tmp_path):
 
 def test_blank_lines_are_skipped(tmp_path):
     assert len(load_cases(_write(tmp_path / "t.jsonl", GOOD, "", "   "))) == 1
+
+
+# --- a tool's output has the class its policy gives it -------------------------------------------
+
+SHOP = {"cls": "ingest", "payload": "p", "policy": "shopassist.yaml", "expected": "pass"}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {**SHOP, "id": "a", "boundary": {"name": "fetch_url", "kind": "tools"}},  # default: ingest
+        {**SHOP, "id": "b", "cls": "recall", "boundary": {"name": "lookup_order"}},  # declared
+        {**SHOP, "id": "c", "cls": "recall", "boundary": {"name": "notes", "kind": "memory"}},
+    ],
+)
+def test_a_case_whose_class_matches_its_tool_loads(tmp_path, case):
+    assert load_cases(_write(tmp_path / "t.jsonl", case))
+
+
+@pytest.mark.parametrize(
+    "case, message",
+    [
+        # the policy lists lookup_order under tools.recall: its output is our own record
+        (
+            {**SHOP, "boundary": {"name": "lookup_order", "kind": "tools"}},
+            "is recall in shopassist",
+        ),
+        # an undeclared tool is ingest, never recall
+        ({**SHOP, "cls": "recall", "boundary": {"name": "fetch_url"}}, "is ingest in shopassist"),
+        # a tool's output is never a principal's request
+        ({**SHOP, "cls": "request", "boundary": {"name": "fetch_url"}}, "never a request"),
+    ],
+)
+def test_a_case_whose_class_disagrees_with_its_policy_is_rejected(tmp_path, case, message):
+    with pytest.raises(CaseError, match=message):
+        load_cases(_write(tmp_path / "t.jsonl", {**case, "id": "x"}))

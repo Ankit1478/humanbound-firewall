@@ -86,8 +86,10 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
     if config["repeats"] < 1:
         raise ValueError(f"{path}: repeats must be at least 1")
     tier3 = tiers.get("tier3")
-    if tier3 is not None and not (tier3.get("provider") and tier3.get("model")):
-        raise ValueError(f"{path}: tier3 needs a provider and a model")
+    if tier3 is not None and not (
+        tier3.get("provider") and (tier3.get("model") or tier3.get("model_env"))
+    ):
+        raise ValueError(f"{path}: tier3 needs a provider and a model (or model_env)")
     return config
 
 
@@ -133,27 +135,46 @@ class CachingStreamer:
         tmp.replace(path)  # atomic: a reader never sees half a reply
 
 
+def _setting(tier3: dict, key: str) -> str | None:
+    """A tier3 setting: the environment variable the config names (`key_env`) when it is set,
+    else the value written in the config (`key`). Per-account values such as an Azure endpoint
+    stay out of the repository; a value in the config is the default."""
+    env = tier3.get(f"{key}_env")
+    if env and os.environ.get(env):
+        return os.environ[env]
+    return str(tier3[key]) if tier3.get(key) else None
+
+
 def build_streamer(tier3: dict | None, config_name: str, use_cache: bool):
     """The Tier 3 judge named in the config, or None. The API key comes from the environment
-    variable the config names (default HUMANBOUND_FIREWALL_API_KEY)."""
+    variable the config names (default HUMANBOUND_FIREWALL_API_KEY); model, endpoint and
+    api_version may also be read from the environment through model_env, endpoint_env and
+    api_version_env."""
     if not tier3:
         return None
     key_env = tier3.get("api_key_env", "HUMANBOUND_FIREWALL_API_KEY")
     api_key = os.environ.get(key_env, "")
     if not api_key:
         raise ValueError(f"tier3 needs an API key: set {key_env}")
+    model = _setting(tier3, "model")
+    endpoint, api_version = _setting(tier3, "endpoint"), _setting(tier3, "api_version")
+    if tier3["provider"] == "azureopenai":
+        missing = [
+            tier3.get(f"{k}_env") or k
+            for k, v in (("endpoint", endpoint), ("api_version", api_version))
+            if not v
+        ]
+        if missing:
+            raise ValueError(f"Azure OpenAI needs an endpoint and an api_version: set {missing}")
     provider = Provider(
         name=tier3["provider"],
         integration=ProviderIntegration(
-            api_key=api_key,
-            model=tier3["model"],
-            endpoint=tier3.get("endpoint"),
-            api_version=tier3.get("api_version"),
+            api_key=api_key, model=model or "", endpoint=endpoint, api_version=api_version
         ),
     )
     streamer = get_llm_streamer(provider)
     if use_cache:
-        streamer = CachingStreamer(streamer, tier3["model"], CACHE_DIR / config_name)
+        streamer = CachingStreamer(streamer, model or "", CACHE_DIR / config_name)
     return streamer
 
 
@@ -334,7 +355,9 @@ def _git_commit() -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="python -m evals.run", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="python -m evals.run", description=(__doc__ or "").split("\n")[0]
+    )
     parser.add_argument("--config", required=True, help="evals/configs/<name>.yaml")
     parser.add_argument("--dataset", default=str(DATASETS_DIR), help="a .jsonl file or a folder")
     parser.add_argument("--out", default=str(RESULTS_DIR), help="where results are written")

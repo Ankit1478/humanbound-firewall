@@ -171,3 +171,59 @@ def test_the_shipped_configs_load():
 
     for path in sorted((Path(run_mod.__file__).parent / "configs").glob("*.yaml")):
         assert load_run_config(path)["name"] == path.stem
+
+
+# --- per-account settings come from the environment ------------------------------------------
+
+
+def test_an_environment_variable_overrides_the_value_in_the_config(monkeypatch):
+    from evals.run import _setting
+
+    tier3 = {"model": "gpt-6.1-sol", "model_env": "DEPLOYMENT"}
+    monkeypatch.delenv("DEPLOYMENT", raising=False)
+    assert _setting(tier3, "model") == "gpt-6.1-sol"  # the config's value is the default
+    monkeypatch.setenv("DEPLOYMENT", "my-sol-deployment")
+    assert _setting(tier3, "model") == "my-sol-deployment"
+    assert _setting({}, "endpoint") is None
+
+
+def test_azure_reads_endpoint_and_version_from_the_environment(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_streamer(provider):
+        seen.update(provider.integration.model_dump())
+        return FakeJudge()
+
+    monkeypatch.setattr(run_mod, "get_llm_streamer", fake_streamer)
+    monkeypatch.setattr(run_mod, "CACHE_DIR", tmp_path / "cache")
+    for k, v in {
+        "AZ_KEY": "k",
+        "AZ_URL": "https://x.openai.azure.com",
+        "AZ_VER": "2099-01-01",
+    }.items():
+        monkeypatch.setenv(k, v)
+    cfg = _config(
+        tmp_path,
+        "name: az\ntiers:\n  tier3: {provider: azureopenai, model: gpt-6.1-sol, api_key_env: AZ_KEY,"
+        " endpoint_env: AZ_URL, api_version_env: AZ_VER}\n",
+    )
+    run(cfg, _dataset(tmp_path), out_dir=tmp_path / "out")
+    assert seen["endpoint"] == "https://x.openai.azure.com" and seen["api_version"] == "2099-01-01"
+    assert seen["model"] == "gpt-6.1-sol"
+
+
+def test_azure_without_an_endpoint_fails_before_running(tmp_path, monkeypatch):
+    monkeypatch.setenv("AZ_KEY", "k")
+    monkeypatch.delenv("AZ_URL", raising=False)
+    cfg = _config(
+        tmp_path,
+        "name: az\ntiers:\n  tier3: {provider: azureopenai, model: m, api_key_env: AZ_KEY,"
+        " endpoint_env: AZ_URL, api_version: '2099-01-01'}\n",
+    )
+    with pytest.raises(ValueError, match="AZ_URL"):
+        run(cfg, _dataset(tmp_path), out_dir=tmp_path / "out")
+
+
+def test_a_model_may_come_only_from_the_environment(tmp_path):
+    cfg = _config(tmp_path, "name: x\ntiers: {tier3: {provider: openai, model_env: M}}\n")
+    assert load_run_config(cfg)["tiers"]["tier3"]["model_env"] == "M"

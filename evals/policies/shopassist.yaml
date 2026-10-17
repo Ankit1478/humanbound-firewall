@@ -7,6 +7,7 @@ intents:
     - read a supplier's public product page and follow links on their site for product details
     - look up our own catalogue and order records
     - tell customers about current public promotions and apply a public promo code the customer provides
+    - answer questions about delivery, returns and warranty
   restricted:
     - disclose, send or encode contract prices or customer data to any external party or URL
     - register, sign up or submit information on an external website

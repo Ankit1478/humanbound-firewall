@@ -227,3 +227,32 @@ def test_azure_without_an_endpoint_fails_before_running(tmp_path, monkeypatch):
 def test_a_model_may_come_only_from_the_environment(tmp_path):
     cfg = _config(tmp_path, "name: x\ntiers: {tier3: {provider: openai, model_env: M}}\n")
     assert load_run_config(cfg)["tiers"]["tier3"]["model_env"] == "M"
+
+
+def test_repeats_can_be_overridden_for_one_run(tmp_path, monkeypatch):
+    judge = FakeJudge()
+    monkeypatch.setenv("HUMANBOUND_FIREWALL_API_KEY", "sk-test")
+    monkeypatch.setattr(run_mod, "get_llm_streamer", lambda provider: judge)
+    monkeypatch.setattr(run_mod, "CACHE_DIR", tmp_path / "cache")
+    path = run(_config(tmp_path, TIER3), _dataset(tmp_path), out_dir=tmp_path / "o", repeats=1)
+    assert len(_results(path)) == 3  # 3 cases x 1 repeat, though the config says 2
+    assert json.loads(path.with_suffix(".meta.json").read_text())["config"]["repeats"] == 1
+    with pytest.raises(ValueError, match="repeats"):
+        run(_config(tmp_path, TIER3), _dataset(tmp_path), out_dir=tmp_path / "p", repeats=0)
+
+
+def test_a_reply_without_text_is_never_cached(tmp_path):
+    """A refusal streams no text; a cached empty reply would replay as 'no verdict' and lose
+    the refusal."""
+
+    class Refuser:
+        calls = 0
+
+        def ping(self, system_p, user_p, **kwargs):
+            Refuser.calls += 1
+            yield MagicMock(choices=[MagicMock(delta=MagicMock(content=None))])
+
+    cache = CachingStreamer(Refuser(), "m", tmp_path)
+    list(cache.ping(system_p="s", user_p="u"))
+    list(cache.ping(system_p="s", user_p="u"))
+    assert Refuser.calls == 2 and not list(tmp_path.glob("*.txt"))

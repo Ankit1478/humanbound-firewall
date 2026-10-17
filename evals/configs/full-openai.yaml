@@ -1,4 +1,6 @@
-# Full stack with an OpenAI judge. Costs tokens; replies are cached under evals/cache/.
+# The whole firewall as a deployment runs it: Tier 0 + a local Tier 1 detector + the LLM judge.
+# Scores the firewall (use judge-openai.yaml to check the labels). Needs the [tier1] extra.
+# Costs tokens; replies are cached under evals/cache/. Key: OPENAI_API_KEY.
 name: full-openai
 tiers:
   tier1:
@@ -8,6 +10,7 @@ tiers:
   tier2: null
   tier3:
     provider: openai
-    model: gpt-4o-mini
+    model: gpt-6-luna
+    api_key_env: OPENAI_API_KEY
 fail: open
 repeats: 3

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The Claude provider works with the 1.x Anthropic SDK and with thinking models.** 1.x removed
+  `temperature` from `messages.create`, so every call failed; it is now sent only when the SDK
+  takes it, and retried away once when a model rejects it with a 400. Thinking models get token
+  headroom so the verdict is not crowded out, and the non-streaming path reads the first text
+  block rather than a thinking block.
+- **The default Claude model is `claude-sonnet-4-6`.** The previous default,
+  `claude-sonnet-4-6-20250514`, is not a published model ID.
+
 ## [0.3.1] — 2026-09-28
 
 ### Changed

@@ -798,7 +798,7 @@ def _provider_from_env() -> Provider:
     defaults = {
         "openai": ("gpt-4o-mini", ProviderName.OPENAI),
         "azureopenai": ("gpt-4o-mini", ProviderName.AZURE_OPENAI),
-        "claude": ("claude-sonnet-4-6-20250514", ProviderName.CLAUDE),
+        "claude": ("claude-sonnet-4-6", ProviderName.CLAUDE),
         "gemini": ("gemini-pro", ProviderName.GEMINI),
     }
 

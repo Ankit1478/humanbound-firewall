@@ -40,6 +40,7 @@ from humanbound_firewall.firewall import (
     _extract_token,  # the firewall's own chunk reader, so the cache sees exactly what the judge saw
 )
 from humanbound_firewall.llm import Provider, ProviderIntegration, get_llm_streamer
+from humanbound_firewall.models import AgentConfig
 
 from .schema import DATASETS_DIR, POLICIES_DIR, Case, load_cases
 
@@ -85,6 +86,13 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
     config["repeats"] = int(config.get("repeats", 1))
     if config["repeats"] < 1:
         raise ValueError(f"{path}: repeats must be at least 1")
+    # How long the judge may take, overriding the policy's own settings.timeout. A policy states
+    # the SLA for its deployed agent; offline evaluation of a reasoning judge needs far longer.
+    # Unset means "use the policy".
+    timeout = config.get("timeout")
+    if timeout is not None and (not isinstance(timeout, int) or timeout < 1):
+        raise ValueError(f"{path}: timeout must be a positive whole number of seconds")
+    config["timeout"] = timeout
     tier3 = tiers.get("tier3")
     if tier3 is not None and not (
         tier3.get("provider") and (tier3.get("model") or tier3.get("model_env"))
@@ -147,6 +155,32 @@ def _setting(tier3: dict, key: str) -> str | None:
     return str(tier3[key]) if tier3.get(key) else None
 
 
+# The environment variable each provider's SDK reads its endpoint from when the client is built.
+_BASE_URL_ENV = {"claude": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
+
+
+def _with_base_url(tier3: dict, build):
+    """Build the streamer against another endpoint when the config names one (`base_url`, or
+    `base_url_env`): an Anthropic- or OpenAI-compatible API such as Z.ai's. The SDK reads the
+    endpoint from its environment variable when the client is built, so it is set only for that
+    moment and restored, leaving the firewall's providers untouched."""
+    base_url = _setting(tier3, "base_url")
+    if not base_url:
+        return build()
+    env = _BASE_URL_ENV.get(tier3["provider"])
+    if env is None:
+        raise ValueError(f"base_url is not supported for provider {tier3['provider']!r}")
+    previous = os.environ.get(env)
+    os.environ[env] = base_url
+    try:
+        return build()
+    finally:
+        if previous is None:
+            os.environ.pop(env, None)
+        else:
+            os.environ[env] = previous
+
+
 def build_streamer(tier3: dict | None, config_name: str, use_cache: bool):
     """The Tier 3 judge named in the config, or None. The API key comes from the environment
     variable the config names (default HUMANBOUND_FIREWALL_API_KEY); model, endpoint and
@@ -174,7 +208,7 @@ def build_streamer(tier3: dict | None, config_name: str, use_cache: bool):
             api_key=api_key, model=model or "", endpoint=endpoint, api_version=api_version
         ),
     )
-    streamer = get_llm_streamer(provider)
+    streamer = _with_base_url(tier3, lambda: get_llm_streamer(provider))
     if use_cache:
         streamer = CachingStreamer(streamer, model or "", CACHE_DIR / config_name)
     return streamer
@@ -211,11 +245,21 @@ class Firewalls:
         tiers = config["tiers"]
         self._config = config
         self._policies_dir = policies_dir
+        self.timeout = config.get("timeout")  # None: each policy's own settings.timeout
         self.streamer = build_streamer(tiers.get("tier3"), config["name"], use_cache)
         self._ensemble = build_ensemble(tiers.get("tier1"))
         self._classifier = build_classifier(tiers.get("tier2"))
         self._built: dict[tuple[str, int], Firewall] = {}
-        self._lock = threading.Lock()
+        self._policies: dict[str, AgentConfig] = {}
+        self._lock = threading.RLock()
+
+    def policy_config(self, policy: str) -> AgentConfig:
+        """The parsed policy, cached. The judge input is built from its `expects`, so a case needs
+        the policy as well as its own boundary."""
+        with self._lock:
+            if policy not in self._policies:
+                self._policies[policy] = load_config(self._policies_dir / policy)
+            return self._policies[policy]
 
     def get(self, policy: str, repeat: int = 0) -> Firewall:
         with self._lock:
@@ -225,7 +269,7 @@ class Firewalls:
                 if isinstance(streamer, CachingStreamer):
                     streamer = streamer.for_repeat(repeat)
                 self._built[key] = Firewall(
-                    load_config(self._policies_dir / policy),
+                    self.policy_config(policy),
                     streamer=streamer,
                     ensemble=self._ensemble,
                     scope_classifier=self._classifier,
@@ -240,6 +284,22 @@ class Firewalls:
 # ---------------------------------------------------------------------------
 
 
+def judge_boundary(firewalls: Firewalls, case: Case) -> dict[str, Any] | None:
+    """The case's boundary, plus the policy's `expects` for that tool.
+
+    The judge is told what the boundary it screens normally returns: an adapter sends this in
+    production (LangChain's `_tool_boundary` attaches `config.tool_expects`), so a case that omits
+    it would measure a different prompt from the one that ships. The case may state its own
+    `expects`; the policy's entry is the default.
+    """
+    if not case.boundary:
+        return case.boundary
+    expects = firewalls.policy_config(case.policy).tool_expects.get(case.boundary.get("name", ""))
+    if not expects or case.boundary.get("expects"):
+        return case.boundary
+    return {**case.boundary, "expects": expects}
+
+
 def run_case(firewalls: Firewalls, case: Case, repeat: int) -> dict[str, Any]:
     """Screen one case and return its result line. Never raises: a harness error is recorded."""
     result: dict[str, Any] = {k: getattr(case, k) for k in _CASE_FIELDS}
@@ -250,7 +310,8 @@ def run_case(firewalls: Firewalls, case: Case, repeat: int) -> dict[str, Any]:
             case.payload,
             cls=case.cls,
             window=case.window or None,
-            boundary=case.boundary,
+            boundary=judge_boundary(firewalls, case),
+            timeout=firewalls.timeout,
         )
         result.update(
             verdict=decision.verdict.value,
@@ -289,6 +350,7 @@ def run(
     workers: int = 4,
     use_cache: bool = True,
     repeats: int | None = None,
+    timeout: int | None = None,
 ) -> Path:
     """Run every case (times the config's repeats) and return the path of the results file."""
     config = load_run_config(config_path)
@@ -296,6 +358,10 @@ def run(
         if repeats < 1:
             raise ValueError("repeats must be at least 1")
         config["repeats"] = repeats
+    if timeout is not None:  # same: a one-off override, recorded in the meta file
+        if timeout < 1:
+            raise ValueError("timeout must be at least 1 second")
+        config["timeout"] = timeout
     cases = load_cases(dataset, policies_dir=policies_dir)
     if split:
         cases = [c for c in cases if c.split == split]
@@ -373,6 +439,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workers", type=int, default=4, help="cases screened in parallel")
     parser.add_argument("--no-cache", action="store_true", help="always ask the LLM judge")
     parser.add_argument("--repeats", type=int, help="override the config's repeats for this run")
+    parser.add_argument(
+        "--timeout", type=int, help="override the policy's judge timeout (seconds) for this run"
+    )
     args = parser.parse_args(argv)
 
     path = run(
@@ -384,6 +453,7 @@ def main(argv: list[str] | None = None) -> None:
         workers=args.workers,
         use_cache=not args.no_cache,
         repeats=args.repeats,
+        timeout=args.timeout,
     )
     results = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     errors = sum(1 for r in results if r["error"])

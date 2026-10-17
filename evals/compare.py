@@ -32,7 +32,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .score import load_results
+from .score import load_results, no_answer
 
 GROUPS = ("label?", "unstable", "split", "category", "no answer", "tier 0", "error")
 TITLES = {
@@ -58,21 +58,8 @@ def load_runs(paths: list[str | Path]) -> dict[str, list[dict]]:
     return runs
 
 
-# The explanations the firewall gives when the judge produced no verdict at all.
-_NO_ANSWER = (
-    "Stream error",
-    "Evaluation timed out",
-    "Evaluation error",
-    "Judge returned no verdict",
-    "Judge did not start with a verdict",
-)
-
-
-def no_answer(result: dict) -> bool:
-    """The judge failed to answer (refused, filtered, timed out): not an opinion about the case."""
-    return result.get("verdict") == "review" and str(result.get("explanation", "")).startswith(
-        _NO_ANSWER
-    )
+# The explanations the firewall gives when the judge produced no verdict at all. `no_answer` and
+# the strings live in score.py: the scorer needs them too, to tell a failed call from real doubt.
 
 
 def _majority(values: list[str]) -> str:

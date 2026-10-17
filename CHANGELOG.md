@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The default judge timeout is 30 seconds, not 5.** The providers give reasoning models extra
+  thinking budget, and those models routinely answer in 5-15 s, so with the 5 s default a large
+  share of verdicts timed out. A timeout is uncertain, which a fail-open deployment passes. In a
+  live run with GPT-6.1 Sol, the 5 s default timed out 9 of 39 judgements on attack
+  payloads; at 30 s, none did. `settings.timeout` still overrides the default.
+
 ## [0.3.1] — 2026-09-28
 
 ### Changed

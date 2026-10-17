@@ -85,6 +85,66 @@ def test_split_and_limit_select_cases(tmp_path):
     assert len(_results(run(cfg, data, out_dir=tmp_path / "b", limit=2))) == 2
 
 
+def test_the_judges_boundary_carries_the_policys_expects(tmp_path):
+    """The judge is told what a boundary normally returns, the way an adapter tells it in
+    production: a case that omits `expects` gets the policy's entry, a case that states its own
+    wins, and a request (no boundary) has none."""
+    from evals.run import Firewalls, judge_boundary
+    from evals.schema import POLICIES_DIR, Case
+
+    firewalls = Firewalls(load_run_config(_config(tmp_path, TIER0)), POLICIES_DIR, use_cache=False)
+
+    def boundary(case):
+        return judge_boundary(firewalls, Case.from_dict(case))
+
+    tool = {"name": "fetch_url", "args": {"url": "https://supplier.example/p/1001"}}
+    assert (
+        boundary(
+            {
+                "id": "a",
+                "cls": "ingest",
+                "payload": "p",
+                "policy": "shopassist.yaml",
+                "expected": "pass",
+                "boundary": dict(tool),
+            }
+        )["expects"]
+        == "a supplier's public web page"
+    )
+    assert (
+        boundary(
+            {
+                "id": "b",
+                "cls": "ingest",
+                "payload": "p",
+                "policy": "shopassist.yaml",
+                "expected": "pass",
+                "boundary": {**tool, "expects": "mine"},
+            }
+        )["expects"]
+        == "mine"
+    )
+    assert (
+        boundary(
+            {
+                "id": "c",
+                "cls": "request",
+                "payload": "p",
+                "policy": "banking.yaml",
+                "expected": "pass",
+            }
+        )
+        is None
+    )
+
+
+def test_a_run_config_may_override_the_judges_timeout(tmp_path):
+    """A policy states the SLA for its deployed agent; a reasoning judge in an offline run needs
+    longer, so the run config can say so. Unset means: use the policy."""
+    assert load_run_config(_config(tmp_path, TIER0 + "timeout: 120\n"))["timeout"] == 120
+    assert load_run_config(_config(tmp_path, TIER0))["timeout"] is None
+
+
 def test_a_tier3_run_records_the_judges_verdict_for_every_repeat(tmp_path, monkeypatch):
     judge = FakeJudge()
     monkeypatch.setenv("HUMANBOUND_FIREWALL_API_KEY", "sk-test")
@@ -159,6 +219,7 @@ def test_a_harness_error_is_recorded_not_raised(tmp_path, monkeypatch):
         ("name: x\ntiers: {tier9: null}\n", "unknown tiers"),
         ("name: x\ntiers: {tier3: {provider: openai}}\n", "provider and a model"),
         ("name: x\nrepeats: 0\n", "repeats"),
+        ("name: x\ntimeout: 0\n", "timeout"),
     ],
 )
 def test_a_broken_config_is_rejected(tmp_path, body, message):
@@ -241,6 +302,28 @@ def test_repeats_can_be_overridden_for_one_run(tmp_path, monkeypatch):
         run(_config(tmp_path, TIER3), _dataset(tmp_path), out_dir=tmp_path / "p", repeats=0)
 
 
+def test_the_judge_timeout_can_be_overridden_for_one_run(tmp_path, monkeypatch):
+    """The policy's settings.timeout is the SLA for the deployed agent; a one-off run of a slow
+    reasoning judge can say otherwise without editing the policy."""
+    judge = FakeJudge()
+    monkeypatch.setenv("HUMANBOUND_FIREWALL_API_KEY", "sk-test")
+    monkeypatch.setattr(run_mod, "get_llm_streamer", lambda provider: judge)
+    monkeypatch.setattr(run_mod, "CACHE_DIR", tmp_path / "cache")
+    path = run(_config(tmp_path, TIER3), _dataset(tmp_path), out_dir=tmp_path / "o", repeats=1)
+    assert json.loads(path.with_suffix(".meta.json").read_text())["config"]["timeout"] is None
+
+    path = run(
+        _config(tmp_path, TIER3),
+        _dataset(tmp_path),
+        out_dir=tmp_path / "q",
+        repeats=1,
+        timeout=120,
+    )
+    assert json.loads(path.with_suffix(".meta.json").read_text())["config"]["timeout"] == 120
+    with pytest.raises(ValueError, match="timeout"):
+        run(_config(tmp_path, TIER3), _dataset(tmp_path), out_dir=tmp_path / "p", timeout=0)
+
+
 def test_a_reply_without_text_is_never_cached(tmp_path):
     """A refusal streams no text; a cached empty reply would replay as 'no verdict' and lose
     the refusal."""
@@ -256,3 +339,18 @@ def test_a_reply_without_text_is_never_cached(tmp_path):
     list(cache.ping(system_p="s", user_p="u"))
     list(cache.ping(system_p="s", user_p="u"))
     assert Refuser.calls == 2 and not list(tmp_path.glob("*.txt"))
+
+
+def test_a_base_url_points_the_provider_at_another_endpoint_only_while_building(monkeypatch):
+    from evals.run import _with_base_url
+
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    seen = _with_base_url(
+        {"provider": "claude", "base_url": "https://api.z.ai/api/anthropic"},
+        lambda: __import__("os").environ.get("ANTHROPIC_BASE_URL"),
+    )
+    assert seen == "https://api.z.ai/api/anthropic"
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ  # restored afterwards
+    assert _with_base_url({"provider": "claude"}, lambda: "built") == "built"
+    with pytest.raises(ValueError, match="base_url"):
+        _with_base_url({"provider": "azureopenai", "base_url": "https://x"}, lambda: None)

@@ -35,7 +35,25 @@ evals/
 ```bash
 python -m evals.run   --config evals/configs/tier0.yaml --dataset evals/datasets
 python -m evals.score --results evals/results/<run-id>.jsonl --baseline evals/baselines/tier0.json
+python -m evals.compare --results evals/results/judge-*.jsonl      # one file per judge
 ```
+
+`--repeats` and `--timeout` override the config for a single run (the meta file records what ran).
+
+## Run configs
+
+A file in `configs/` names the tiers to build and how to call the judge: `name`, `tiers`
+(`tier1` detectors, `tier2` classifier, `tier3` judge; `null` turns one off), `fail`, `mode`,
+`repeats` and an optional `timeout`.
+
+`timeout` overrides the judge timeout a policy declares in `settings.timeout`. A policy states the
+SLA for its deployed agent; evaluating a reasoning judge offline needs far longer — GLM-5.3 thinks
+before it answers and needs ~60s where the policies say 15, so without the override the run
+records timeouts instead of verdicts.
+
+The runner also tells the judge what the case's boundary normally returns, from the policy's
+`tools.expects`. That is the same input the LangChain adapter attaches in production, so the
+offline prompt is the one that ships.
 
 ## Checking the labels
 
@@ -49,7 +67,13 @@ python -m evals.compare --results evals/results/judge-openai-*.jsonl evals/resul
 ```
 
 The review list puts first the cases where every judge, in every repeat, said the opposite of the
-label. A disagreement is not proof that the label is wrong: read the case, then decide.
+label. A disagreement is not proof that the label is wrong: read the case, then decide. With three
+judges, check the majority: a label that two judges confirm and one contradicts is usually right.
+
+A judge call that failed (a bad key, a content filter, a timeout) also comes back as `review`, so
+`score.py` counts those separately as **no verdict** and fails the gate: such a run is not scored,
+it is rerun. Without this, a dead API key reads as a judge that was merely unsure, and under
+fail-open it reads as a pass.
 
 ## Rules
 

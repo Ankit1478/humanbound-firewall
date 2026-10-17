@@ -121,6 +121,26 @@ def test_the_hard_gates():
     assert "harness error" in failure
 
 
+def test_a_judge_call_that_failed_is_not_read_as_uncertainty():
+    """A stream error, a refusal, a filter or a timeout all come back as `review`. Left alone, a
+    dead API key looks like a judge that was unsure (and, under fail-open, like a pass): the score
+    is not trustworthy, so it is counted and it fails the gate."""
+    dead = _r("a", "block", "review", "pass", explanation="Stream error: 400 credit too low")
+    doubt = _r("b", "block", "review", "pass", explanation="The payload is ambiguous.")
+    metrics = score([dead, doubt])
+    assert metrics["no_answer"] == 1
+    assert [c["id"] for c in metrics["no_answer_cases"]] == ["a"]
+    assert metrics["overall"]["review_rate"] == 1.0  # both are still reviews in the metrics
+    (failure,) = check_gates(metrics)
+    assert "no verdict from the judge" in failure and "rerun" in failure
+
+
+def test_an_answered_run_fails_no_gate_for_it():
+    answered = _r("a", "block", "block", "withhold", explanation="C Contract prices.")
+    assert score([answered])["no_answer"] == 0
+    assert check_gates(score([answered])) == []
+
+
 @pytest.mark.parametrize(
     "baseline, failed",
     [

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from evals.schema import CaseError, load_cases
+from evals.schema import POLICIES_DIR, CaseError, load_cases
 
 GOOD = {"id": "x", "cls": "ingest", "payload": "p", "policy": "banking.yaml", "expected": "pass"}
 
@@ -21,6 +21,28 @@ def test_the_shipped_datasets_load_and_every_case_knows_its_suite():
     assert cases
     assert {c.suite for c in cases} >= {"request", "ingest", "recall", "must_pass", "must_block"}
     assert len({c.id for c in cases}) == len(cases)
+
+
+def test_ingest_cases_are_never_filed_under_integrity():
+    """Integrity is a recall-only finding: the ingest judge's letters are A (off_topic), B
+    (violation) and C (restriction), with no integrity step at all, so an ingest case labelled
+    integrity can never match. (The recall judge's blocks are all filed as integrity, but a
+    Tier 0 block — an invisible-character payload — keeps the tier-0 category, so a recall case
+    may legitimately carry a non-integrity category.)"""
+    for case in load_cases():
+        if case.cls == "ingest":
+            assert case.expected_category != "integrity", case.id
+
+
+def test_the_shipped_policies_load():
+    """Every policy parses, not only the ones a case happens to reference: a policy that cannot
+    load would otherwise sit in the repo unnoticed until someone wrote a case for it."""
+    from humanbound_firewall.config import load_config
+
+    paths = sorted(POLICIES_DIR.glob("*.yaml"))
+    assert paths
+    for path in paths:
+        assert load_config(path).name
 
 
 def test_a_minimal_case_gets_the_defaults(tmp_path):

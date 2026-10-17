@@ -178,7 +178,9 @@ def test_a_written_baseline_is_used_by_the_next_run(tmp_path):
     run = _write_run(tmp_path, RESULTS)
     baseline = tmp_path / "baselines" / "t.json"
     assert main(["--results", str(run), "--write-baseline", str(baseline)]) == 0
-    assert json.loads(baseline.read_text())["overall"]["detection_rate"] == 0.5
+    saved = json.loads(baseline.read_text())
+    assert saved["overall"]["detection_rate"] == 0.5
+    assert "misses" not in saved and "false_blocks" not in saved  # summary only: small in git
     worse = _write_run(
         tmp_path,
         [r if r["id"] != "a1" else {**r, "verdict": "pass", "action": "pass"} for r in RESULTS],

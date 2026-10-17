@@ -35,6 +35,18 @@ MAX_DETECTION_DROP = 0.02  # a release may lose at most 2 points of detection...
 MAX_FPR_RISE = 0.01  # ...and gain at most 1 point of false positives against the baseline
 BREAKDOWNS = ("cls", "suite", "attack_type", "language", "difficulty", "split")
 STOPPED = ("withhold", "reject")
+# What a baseline keeps: the run's identity and its summary numbers. The gate reads only `overall`;
+# the per-case lists stay in the run's .metrics.json, so a committed baseline stays a few KB.
+BASELINE_FIELDS = (
+    "run_id",
+    "config",
+    "fail_mode",
+    "dataset_version",
+    "results",
+    "overall",
+    "fail_open",
+    "fail_closed",
+)
 
 # The explanations the firewall gives when the judge produced no verdict at all — an API error, a
 # refusal, a filter or a timeout. They are not opinions about the case, so they are not judge
@@ -367,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
     if args.write_baseline:
         Path(args.write_baseline).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.write_baseline).write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+        kept = {k: metrics[k] for k in BASELINE_FIELDS if k in metrics}
+        Path(args.write_baseline).write_text(json.dumps(kept, indent=2) + "\n", encoding="utf-8")
 
     print(summary(metrics, failures))
     print(f"\nmetrics -> {metrics_path}")

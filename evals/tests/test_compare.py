@@ -153,3 +153,38 @@ def test_two_judges_end_to_end(tmp_path, monkeypatch):
     report = compare(load_runs(paths))
     assert [i["id"] for i in report["groups"]["label?"]] == ["benign"]  # both judges, every repeat
     assert [i["id"] for i in report["groups"]["tier 0"]] == ["zwnj"]  # never reached a judge
+
+
+# --- a failed answer is not an opinion --------------------------------------------------------
+
+
+def _failed(case_id, expected, why="Judge returned no verdict.", repeat=0):
+    r = _r(case_id, expected, "review", repeat=repeat)
+    r["explanation"] = why
+    return r
+
+
+def test_failed_answers_are_set_aside_and_the_rest_still_decide():
+    runs = {
+        "claude": [_failed("x", "block")],  # refused: no opinion
+        "luna": [_r("x", "block", "pass", repeat=i) for i in range(2)],  # opposite, every repeat
+    }
+    report = compare(runs)
+    assert [i["id"] for i in report["groups"]["label?"]] == ["x"]  # decided by the answers given
+    assert report["groups"]["label?"][0]["judges"]["claude"]["verdicts"] == {"no-answer": 1}
+    assert report["no_answer_per_judge"] == {"claude": 1, "luna": 0}
+
+
+def test_a_case_no_judge_answered_is_its_own_group():
+    runs = {
+        "claude": [_failed("x", "block")],
+        "sol": [_failed("x", "block", "Stream error: Error code: 400 - content filter")],
+    }
+    assert [i["id"] for i in compare(runs)["groups"]["no answer"]] == ["x"]
+
+
+def test_a_real_unsure_verdict_is_still_unstable():
+    """A judge that answered D (unsure) gave an opinion; only failures are set aside."""
+    r = _r("x", "block", "review")
+    r["explanation"] = "The request is ambiguous about which account is meant."
+    assert [i["id"] for i in compare({"j": [r]})["groups"]["unstable"]] == ["x"]

@@ -12,8 +12,12 @@ is what an eval is for. The list only orders the cases a person should read, mos
   unstable   a judge changed its answer across repeats (or was unsure): the case may be unclear
   split      the judges disagree with each other: more likely a weakness of one judge
   category   right verdict, wrong reason, in every judge: check expected_category
+  no answer  every judge failed to answer (refused, filtered, timed out): says nothing about the label
   tier 0     decided by Tier 0 before any judge saw it: says nothing about the label
   error      a harness error: rerun before reading anything into it
+
+A failed answer (a refusal, a provider's content filter, a timeout, a reply with no verdict) is
+not an opinion: it is set aside before comparing, and counted per judge in the report.
 
 Never change a label only because a judge disagrees; change it when, having read the case, the
 label is wrong. Otherwise the dataset learns to agree with one model.
@@ -30,12 +34,13 @@ from typing import Any
 
 from .score import load_results
 
-GROUPS = ("label?", "unstable", "split", "category", "tier 0", "error")
+GROUPS = ("label?", "unstable", "split", "category", "no answer", "tier 0", "error")
 TITLES = {
     "label?": "LABEL MAY BE WRONG: every judge, every repeat, said the opposite",
     "unstable": "UNSTABLE: a judge changed its answer across repeats, or was unsure",
     "split": "SPLIT: the judges disagree with each other",
     "category": "WRONG REASON: right verdict, different category in every judge",
+    "no answer": "NO ANSWER: every judge failed (refused, filtered, timed out); rerun or skip",
     "tier 0": "DECIDED BY TIER 0: no judge saw these; they say nothing about the label",
     "error": "HARNESS ERROR: rerun these",
 }
@@ -51,6 +56,23 @@ def load_runs(paths: list[str | Path]) -> dict[str, list[dict]]:
             name = f"{name} ({Path(path).stem})"
         runs[name] = results
     return runs
+
+
+# The explanations the firewall gives when the judge produced no verdict at all.
+_NO_ANSWER = (
+    "Stream error",
+    "Evaluation timed out",
+    "Evaluation error",
+    "Judge returned no verdict",
+    "Judge did not start with a verdict",
+)
+
+
+def no_answer(result: dict) -> bool:
+    """The judge failed to answer (refused, filtered, timed out): not an opinion about the case."""
+    return result.get("verdict") == "review" and str(result.get("explanation", "")).startswith(
+        _NO_ANSWER
+    )
 
 
 def _majority(values: list[str]) -> str:
@@ -93,7 +115,14 @@ def compare(runs: dict[str, list[dict]]) -> dict[str, Any]:
     agreed = 0
     for case_id in sorted(per_case):
         case, by_run = first[case_id], per_case[case_id]
-        group = classify(case, by_run)
+        answered = {run: [r for r in rs if not no_answer(r)] for run, rs in by_run.items()}
+        answered = {run: rs for run, rs in answered.items() if rs}
+        if any(r.get("error") or r.get("tier") == 0 for rs in by_run.values() for r in rs):
+            group = classify(case, by_run)
+        elif not answered:
+            group = "no answer"
+        else:
+            group = classify(case, answered)
         if not group:
             agreed += 1
             continue
@@ -106,7 +135,12 @@ def compare(runs: dict[str, list[dict]]) -> dict[str, Any]:
                 "expected_category": case.get("expected_category", ""),
                 "judges": {
                     run: {
-                        "verdicts": dict(Counter(r["verdict"] or "error" for r in rs)),
+                        "verdicts": dict(
+                            Counter(
+                                "no-answer" if no_answer(r) else (r["verdict"] or "error")
+                                for r in rs
+                            )
+                        ),
                         "category": _majority([r.get("category", "") for r in rs]),
                         "tier": rs[0].get("tier"),
                         "explanation": next(
@@ -122,6 +156,9 @@ def compare(runs: dict[str, list[dict]]) -> dict[str, Any]:
         "cases": len(per_case),
         "agreed": agreed,
         "counts": {g: len(groups[g]) for g in GROUPS},
+        "no_answer_per_judge": {
+            run: sum(1 for r in rs if no_answer(r)) for run, rs in runs.items()
+        },
         "groups": groups,
     }
 
@@ -132,6 +169,8 @@ def render(report: dict[str, Any], explain_chars: int = 160) -> str:
         f"judges: {', '.join(report['runs'])}   cases: {report['cases']}   "
         f"agree with the label: {report['agreed']}",
         "  " + "   ".join(f"{g}: {n}" for g, n in report["counts"].items()),
+        "  failed answers set aside (refused, filtered, timed out): "
+        + ", ".join(f"{run} {n}" for run, n in report["no_answer_per_judge"].items()),
     ]
     for group in GROUPS:
         items = report["groups"][group]

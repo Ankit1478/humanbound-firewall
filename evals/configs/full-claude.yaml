@@ -1,4 +1,6 @@
-# Full stack with a Claude judge. Costs tokens; replies are cached under evals/cache/.
+# The whole firewall as a deployment runs it: Tier 0 + a local Tier 1 detector + the LLM judge.
+# Scores the firewall (use judge-claude.yaml to check the labels). Needs the [tier1] extra.
+# Costs tokens; replies are cached under evals/cache/. Key: ANTHROPIC_API_KEY.
 name: full-claude
 tiers:
   tier1:
@@ -8,6 +10,7 @@ tiers:
   tier2: null
   tier3:
     provider: claude
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5-5
+    api_key_env: ANTHROPIC_API_KEY
 fail: open
 repeats: 3

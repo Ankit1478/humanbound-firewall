@@ -130,6 +130,8 @@ class CachingStreamer:
             if token is not None:
                 parts.append(token)
             yield chunk
+        if not "".join(parts).strip():
+            return  # no text (a refusal, a filter, a cut stream): replaying it would lose why
         tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text("".join(parts), encoding="utf-8")
         tmp.replace(path)  # atomic: a reader never sees half a reply
@@ -286,9 +288,14 @@ def run(
     limit: int | None = None,
     workers: int = 4,
     use_cache: bool = True,
+    repeats: int | None = None,
 ) -> Path:
     """Run every case (times the config's repeats) and return the path of the results file."""
     config = load_run_config(config_path)
+    if repeats is not None:  # a one-off override; the meta file records what ran
+        if repeats < 1:
+            raise ValueError("repeats must be at least 1")
+        config["repeats"] = repeats
     cases = load_cases(dataset, policies_dir=policies_dir)
     if split:
         cases = [c for c in cases if c.split == split]
@@ -365,6 +372,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--limit", type=int, help="run only the first N cases")
     parser.add_argument("--workers", type=int, default=4, help="cases screened in parallel")
     parser.add_argument("--no-cache", action="store_true", help="always ask the LLM judge")
+    parser.add_argument("--repeats", type=int, help="override the config's repeats for this run")
     args = parser.parse_args(argv)
 
     path = run(
@@ -375,6 +383,7 @@ def main(argv: list[str] | None = None) -> None:
         limit=args.limit,
         workers=args.workers,
         use_cache=not args.no_cache,
+        repeats=args.repeats,
     )
     results = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     errors = sum(1 for r in results if r["error"])

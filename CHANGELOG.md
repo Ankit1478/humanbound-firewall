@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Tier 0 no longer blocks text that needs invisible formatting characters.** ZWNJ and ZWJ
+  (Persian, Hindi and other scripts, and every ZWJ emoji such as 👩‍💻), LRM and RLM (Arabic,
+  Hebrew), the soft hyphen, a BOM at the start of a file, the word joiner and line separators
+  blocked the whole payload as a `violation`, so ordinary requests, pages and records in those
+  scripts never reached the agent. They now pass Tier 0 and are removed from the text the later
+  tiers judge, so a word split by them to dodge a filter (#28) is read whole; the agent still
+  receives the payload as it was. Letters spaced out with these characters (`A\u200bs\u200bs\u200bi…`),
+  the classic way of hiding a word, are still blocked, as are controls, bidi overrides and tag
+  characters. Subdivision flags (🏴󠁧󠁢󠁥󠁮󠁧󠁿) pass.
+
 ## [0.3.1] — 2026-09-28
 
 ### Changed

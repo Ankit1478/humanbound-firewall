@@ -106,12 +106,16 @@ class LLMPinger:
 
     def __do_completion_api_call(self, system_p, user_p, max_tokens, temperature):
         model = self._provider["integration"]["model"]
+        # An explicit timeout, as the streamer sends: without one the SDK refuses a non-streaming
+        # request whose max_tokens (with the thinking headroom) exceeds a model's non-streaming
+        # cap (8192 for Opus 4 / 4.1) before sending it, with "Streaming is required...".
         return _create(
             self.client,
             model,
             _params(model, max_tokens, temperature),
             system=system_p,
             messages=[{"role": "user", "content": user_p}],
+            timeout=LLM_PING_TIMEOUT,
         )
 
     def ping(

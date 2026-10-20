@@ -549,8 +549,26 @@ def test_claude_never_sends_temperature_to_an_sdk_that_removed_it(monkeypatch):
     LLMStreamer(_provider(ProviderName.CLAUDE, model="claude-sonnet-5-5")).ping("s", "u")
     assert len(calls) == 1 and calls[0]["stream"] is True  # one call, no TypeError
 
-    def create_sync(*, model, max_tokens, messages, system=None):
+    def create_sync(*, model, max_tokens, messages, system=None, timeout=None):
         return MagicMock(content=[types.SimpleNamespace(type="text", text="P ok")])
 
     _claude(monkeypatch, create_sync)
     assert LLMPinger(_provider(ProviderName.CLAUDE)).ping("s", "u") == "P ok"
+
+
+@pytest.mark.usefixtures("_forget_claude_temperature_rejections")
+def test_claude_pinger_sends_an_explicit_timeout(monkeypatch):
+    """With the thinking headroom, the pinger's non-streaming max_tokens exceeds the SDK's
+    non-streaming cap for some models (8192 for Opus 4 / 4.1); the SDK refuses such a request
+    unless it carries an explicit timeout. The pinger sends the same one as the streamer."""
+    create = MagicMock(
+        return_value=MagicMock(content=[types.SimpleNamespace(type="text", text="P ok")])
+    )
+    _claude(monkeypatch, create)
+    from humanbound_firewall.llm.claude import LLM_PING_TIMEOUT, LLMPinger
+
+    assert (
+        LLMPinger(_provider(ProviderName.CLAUDE, model="claude-opus-4-1")).ping("s", "u") == "P ok"
+    )
+    assert create.call_args.kwargs["timeout"] == LLM_PING_TIMEOUT
+    assert create.call_args.kwargs["max_tokens"] > 8192  # the case the SDK would refuse untimed

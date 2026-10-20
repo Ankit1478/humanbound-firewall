@@ -50,9 +50,14 @@ _FORMAT_CHARS = re.compile(r"[\xad\u200b-\u200f\u2028\u2029\u2060\ufeff]")
 # The same characters dropped between single letters ("A\u200bs\u200bs\u200bi..."): the classic way
 # of hiding a word, never how a script uses them. Blocked like the controls above.
 _INTERLEAVED = re.compile(r"(?:[^\W\d_][\xad\u200b-\u200d\u2060]){4,}[^\W\d_]")
-# A subdivision flag (England, Scotland, Wales) is a black flag, two to seven lowercase tag letters
-# and a cancel tag: the one place tag characters are text, so it is the one place they pass.
-_TAG_FLAG = re.compile("\U0001f3f4[\U000e0061-\U000e007a]{2,7}\U000e007f")
+# The three RGI subdivision flags (England, Scotland, Wales): a black flag, the tag letters gbeng,
+# gbsct or gbwls and a cancel tag. The one place tag characters are text, so the one place they
+# pass. Only these three: any other run of tag letters inside a "flag" is hidden ASCII.
+_TAG_FLAG = re.compile(
+    "\U0001f3f4\U000e0067\U000e0062"
+    "(?:\U000e0065\U000e006e\U000e0067|\U000e0073\U000e0063\U000e0074|\U000e0077\U000e006c\U000e0073)"
+    "\U000e007f"
+)
 
 
 def _hidden_characters(text: str) -> bool:

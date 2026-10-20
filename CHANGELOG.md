@@ -28,7 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tiers judge, so a word split by them to dodge a filter (#28) is read whole; the agent still
   receives the payload as it was. Letters spaced out with these characters (`A\u200bs\u200bs\u200bi…`),
   the classic way of hiding a word, are still blocked, as are controls, bidi overrides and tag
-  characters. Subdivision flags (🏴󠁧󠁢󠁥󠁮󠁧󠁿) pass.
+  characters. Only the three RGI subdivision flags (England, Scotland, Wales) pass; any other
+  tag sequence, a "flag" carrying hidden ASCII included, is blocked.
 
 ## [0.3.1] — 2026-09-28
 
